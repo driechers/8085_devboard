@@ -39,6 +39,8 @@ START:  LXI  SP,STACK                   ;*** COLD START ***
         MVI  A,0FFH
         JMP  INIT
 ;
+
+RST1:	ORG 0008H
         XTHL                            ;*** TSTC OR RST 1 ***
         RST  5                          ;IGNORE BLANKS AND
         CMP  M                          ;TEST CHARACTER
@@ -46,16 +48,19 @@ START:  LXI  SP,STACK                   ;*** COLD START ***
 ;
 CRLF:   MVI  A,CR                       ;*** CRLF ***
 ;
+RST2:	ORG 0010H
         PUSH PSW                        ;*** OUTC OR RST 2 ***
         LDA  OCSW                       ;PRINT CHARACTER ONLY
         ORA  A                          ;IF OCSW SWITCH IS ON
         JMP  OC2                        ;REST OF THIS IS AT OC2
 ;
+RST3:	ORG 0018H
         CALL EXPR2                      ;*** EXPR OR RST 3 ***
         PUSH H                          ;EVALUATE AN EXPRESSION
         JMP  EXPR1                      ;REST OF IT AT EXPR1
         DB   'W'
 ;
+RST4:	ORG 0020H
         MOV  A,H                        ;*** COMP OR RST 4 ***
         CMP  D                          ;COMPARE HL WITH DE
         RNZ                             ;RETURN CORRECT C AND
@@ -64,17 +69,20 @@ CRLF:   MVI  A,CR                       ;*** CRLF ***
         RET
         DB   "AN"
 ;
+RST5:	ORG 0028H
 SS1:    LDAX D                          ;*** IGNBLK/RST 5 ***
         CPI  20H                        ;IGNORE BLANKS
         RNZ                             ;IN TEXT (WHERE DE->)
         INX  D                          ;AND RETURN THE FIRST
         JMP  SS1                        ;NON-BLANK CHAR. IN A
 ;
+RST6:	ORG 0030H
         POP  PSW                        ;*** FINISH/RST 6 ***
         CALL FIN                        ;CHECK END OF COMMAND
         JMP  QWHAT                      ;PRINT "WHAT?" IF WRONG
         DB   'G'
 ;
+RST7:	ORG 0038H
         RST  5                          ;*** TSTV OR RST 7 ***
         SUI  40H                        ;TEST VARIABLES
         RC                              ;C:NOT A VARIABLE
@@ -242,6 +250,8 @@ ST4:    POP  B                          ;GET READY TO INSERT
         POP  PSW                        ;THE LENGTH OF NEW LINE
         PUSH H                          ;IS 3 (LINE # AND CR)
         CPI  3                          ;THEN DO NOT INSERT
+
+;FE1: JZ FE1
         JZ   RSTART                     ;MUST CLEAR THE STACK
         ADD  L                          ;COMPUTE NEW TXTUNF
         MOV  L,A
@@ -357,7 +367,8 @@ GOTO:   RST  3                          ;*** GOTO EXPR ***
 LIST:   CALL TSTNUM                     ;TEST IF THERE IS A #
         CALL ENDCHK                     ;IF NO # WE GET A 0
         CALL FNDLN                      ;FIND THIS OR NEXT LINE
-LS1:    JC   RSTART                     ;C:PASSED TXTUNF
+LS1: JC LS1
+        JC   RSTART                     ;C:PASSED TXTUNF
         CALL PRTLN                      ;PRINT THE LINE
         CALL CHKIO                      ;STOP IF HIT CONTROL-C
         CALL FNDLP                      ;FIND NEXT LINE
@@ -867,8 +878,17 @@ PARN:   RST  1
         DB   ')'
         DB   XP43-$-1
 XP42:   RET
-XP43:   JMP  QWHAT                      ;ELSE SAY: "WHAT?"
-;
+XP43:
+;E1: ;  YEP Something crazy in expression code THIS SEEMS TO BE A PROBLEM but i cant consistently hit this loop
+;	NOP 
+;	NOP 
+;	NOP 
+;	JMP E1
+;	JMP E1
+;	JMP E1
+;	JMP E1
+        JMP  QWHAT                      ;ELSE SAY: "WHAT?" 
+
 RND:    CALL PARN                       ;*** RND(EXPR) ***
         MOV  A,H                        ;EXPR MUST BE +
         ORA  A
@@ -1042,6 +1062,7 @@ ENDCHK: RST  5                          ;*** ENDCHK ***
 QWHAT:  PUSH D                          ;*** QWHAT ***
 AWHAT:  LXI  D,WHAT                     ;*** AWHAT ***
 ERROR:  SUB  A                          ;*** ERROR ***
+
         CALL PRTSTG                     ;PRINT 'WHAT?', 'HOW?'
         POP  D                          ;OR 'SORRY'
         LDAX D                          ;SAVE THE CHARACTER
@@ -1054,6 +1075,9 @@ ERROR:  SUB  A                          ;*** ERROR ***
         INX  H
         ORA  M
         POP  D
+;FE6: ; NOT Triggered
+;	NOP
+;	JZ FE6
         JZ   RSTART                     ;IF ZERO, JUST RESTART
         MOV  A,M                        ;IF NEGATIVE,
         ORA  A
@@ -1066,6 +1090,10 @@ ERROR:  SUB  A                          ;*** ERROR ***
         RST  2
         SUB  A                          ;AND THE REST OF THE
         CALL PRTSTG                     ;LINE
+;FE5: ; TRIGGERED by print statement
+;	NOP
+;	JMP FE5
+
         JMP  RSTART                     ;THEN RESTART
 ;
 QSORRY: PUSH D                          ;*** QSORRY ***
@@ -1374,11 +1402,22 @@ PU1:    PUSH H
 ;OUTC:  PUSH PSW                        ;THIS IS AT LOC. 10
 ;       LDA  OCSW                       ;CHECK SOFTWARE SWITCH
 ;       ORA  A
+
+; Constants for serial communications at 9600 with a 6.144MHz crystal
+; The connected terminal should be set for 9600,N,8,1
+BITTIME     equ     0113H           ; 6.144 time delay for a single bit
+HALFBIT     equ     010AH           ; 6.144 time after start bit detected to read the middle of a bit
+;BITTIME     equ     0112H           ; 6.000 time delay for a single bit
+;HALFBIT     equ     0109H           ; 6.000 time after start bit detected to read the middle of a bit
+BITSOUT     equ     11              ; Serial bits to send (start, 8 data, 2 stop)
+BITSIN      equ     9               ; Serial bits to read + 1 (read 8 bits)
+
 INIT:   STA  OCSW
-        MVI  A,4EH                      ;Initialize 8251A UART -- 3 is status port
-        OUT  3				;1 stop bit, no parity, 8-bit char, 16x baud
-        MVI  A,37H			;enable receive and transmit
-        OUT  3
+; 8251 not used Do not need to initialize it
+;        MVI  A,4EH                      ;Initialize 8251A UART -- 3 is status port
+;        OUT  3				;1 stop bit, no parity, 8-bit char, 16x baud
+;        MVI  A,37H			;enable receive and transmit
+;        OUT  3
         MVI  D,19H
 PATLOP:
         CALL CRLF
@@ -1395,11 +1434,46 @@ PATLOP:
 OC2:    JNZ  OC3                        ;IT IS ON
         POP  PSW                        ;IT IS OFF
         RET                             ;RESTORE AF AND RETURN
-OC3:    IN   3                          ;Check status
-        ANI  1H                         ;STATUS BIT
-        JZ   OC3                        ;NOT READY, WAIT
+OC3:
+        ; Not checking status. bit bang instead
+        ;IN   3                          ;Check status
+        ;ANI  1H                         ;STATUS BIT
+        ;JZ   OC3                        ;NOT READY, WAIT
         POP  PSW                        ;READY, GET OLD A BACK
-        OUT  2                          ;Out to data port
+        ;OUT  2                          ;Out to data port
+
+	; Bit Bang UART Send of A
+            di
+            push    h
+            push    b
+            push    psw             ; need to preserve a and flags
+            mov     c,a             ; Orignal code using C for argument
+            mvi     b,BITSOUT       ; Number of output bits
+            xra     a               ; Clear carry for a zero start bit
+CO1:
+            mvi     a,080H          ; Set the MSB to shift into the SDE flag
+            rar                     ; Shift one into SDE and carry into SOD flag
+            cmc                     ; ??? This appears to be useless, carry is  set below
+            sim                     ; Output start, data, or stop bit
+            lxi     h,BITTIME       ; Load the time delay for one bit width
+CO2:
+            dcr     l               ; Wait for bit time
+            jnz     CO2
+            dcr     h
+            jnz     CO2
+            stc                     ; Shift in ones for stop bit(s)
+            mov     a,c             ; Get char to send
+            rar                     ; LSB of char into carry to send
+            mov     c,a             ; Store rotated data
+            dcr     b
+            jnz     CO1             ; Send next bit
+            pop     psw             ; restore a and flags
+            pop     b
+            pop     h
+            ei
+        ; END of bit bang replacment
+
+
         CPI  CR                         ;WAS IT CR?
         RNZ                             ;NO, FINISHED
         MVI  A,LF                       ;YES, WE SEND LF TOO
@@ -1407,22 +1481,72 @@ OC3:    IN   3                          ;Check status
         MVI  A,CR                       ;GET CR BACK IN A
         RET
 ;
-CHKIO:  IN   3                         ;*** CHKIO ***
-        NOP                             ;STATUS BIT FLIPPED?
-        ANI  2H                         ;MASK STATUS BIT
-        RZ                              ;NOT READY, RETURN "Z"
-        IN   2                         ;READY, READ DATA
-        ANI  7FH                        ;MASK BIT 7 OFF
+CHKIO:
+; Bit bang is always ready!
+;        IN   3                         ;*** CHKIO ***
+;        NOP                             ;STATUS BIT FLIPPED?
+;        ANI  2H                         ;MASK STATUS BIT
+;        RZ                              ;NOT READY, RETURN "Z"
+; Not using 8251 Bit bang baby!
+;        IN   2                         ;READY, READ DATA
+;        ANI  7FH                        ;MASK BIT 7 OFF
+
+CIN:
+            di
+            push    h
+            push    b
+            mvi     b,BITSIN        ; Loop count is number of bits to be read minus one
+CI1:                                ;   does not include stop bits
+            rim                     ; Wait for a zero indicating a start bit
+            ora     a
+            jm      CI1
+            lxi     h,HALFBIT       ; delay a half bit time to get to the middle of the start bit
+CI2:
+            dcr     l
+            jnz     CI2
+            dcr     h
+            jnz     CI2
+CI3:
+            lxi     h,BITTIME       ; delay to the middle of the next data bit
+CI4:
+            dcr     l
+            jnz     CI4
+            dcr     h
+            jnz     CI4
+
+            rim                     ; read the next data bit
+            ral                     ; shift the data bit into the carry flag
+            dcr     b               ; exit if all of the bits have been read
+            jz      CI5
+            mov     a,c             ; character in progress into A
+            rar                     ; shift the data bit from carry into the MSB
+            mov     c,a             ; store the character back into C
+            nop
+            jmp     CI3             ; get the next bit
+
+CI5:
+            mov     a,c             ; return the character in A
+            out     0FAH            ; DEBUG: output the char value for the logic analyzer
+            pop     b
+            pop     h
+            ei
+;End of bit bang replacement
         CPI  0FH                        ;IS IT CONTROL-O?
-        JNZ  CI1                        ;NO, MORE CHECKING
+        JNZ  CI6                        ;NO, MORE CHECKING
         LDA  OCSW                       ;CONTROL-O FLIPS OCSW
         CMA                             ;ON TO OFF, OFF TO ON
         STA  OCSW
         JMP  CHKIO                      ;GET ANOTHER INPUT
-CI1:    CPI  3H                         ;IS IT CONTROL-C?
+CI6:    CPI  3H                         ;IS IT CONTROL-C?
         RNZ                             ;NO, RETURN "NZ"
-        JMP  RSTART                     ;YES, RESTART TBI
-;
+
+;FEE:
+;	NOP
+;	NOP
+;	NOP
+;	JMP FEE ; TODO how did i miss this? eeeh this actually seems to work just fine
+
+        JMP  RSTART                     ;YES, RESTART TBI ;
 MSG1:   DB   "TINY "
         DB   "BASIC"
         DB   CR
@@ -1556,7 +1680,7 @@ EX5:    MOV  A,M                        ;LOAD HL WITH THE JUMP
 ;
 LSTROM:                                 ;ALL ABOVE CAN BE ROM
 ;       ORG  1000H                      ;HERE DOWN MUST BE RAM
-        ORG  0800H
+        ORG  8000H
 OCSW:   DS   1                          ;SWITCH FOR OUTPUT
 CURRNT: DS   2                          ;POINTS TO CURRENT LINE
 STKGOS: DS   2                          ;SAVES SP IN 'GOSUB'
@@ -1572,7 +1696,7 @@ TXTUNF: DS   2                          ;->UNFILLED TEXT AREA
 TXTBGN: DS   2                          ;TEXT SAVE AREA BEGINS
 ;       ORG  1366H
 ;       ORG  1F00H
-	ORG  0F00H			;for 2K RAM
+	ORG  8700H			;for 2K RAM
 TXTEND: DS   0                          ;TEXT SAVE AREA ENDS
 VARBGN: DS   55                         ;VARIABLE @(0)
 BUFFER: DS   64                         ;INPUT BUFFER
@@ -1580,7 +1704,7 @@ BUFEND: DS   1                          ;BUFFER ENDS
 STKLMT: DS   1                          ;TOP LIMIT FOR STACK
 ;       ORG  1400H
 ;       ORG  2000H
-	ORG  1000H			;for 4K system -- 2k ROM, 2K RAM
+	ORG  8800H			;for 4K system -- 2k ROM, 2K RAM
 STACK:  DS   0                          ;STACK STARTS HERE
 ;
 CR      EQU  0DH

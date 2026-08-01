@@ -382,8 +382,8 @@
 ; 1K ROM from 0000h-03FFh containing BASIC
 ; 1K RAM from 0400h-0800h
 
-RAM_BASE equ 0400h
-RAM_TOP equ 0800h ; 1 more than top byte of RAM
+RAM_BASE equ 8000h
+RAM_TOP equ 8800h ; 1 more than top byte of RAM
 
 ; Token values
 ; 0-31 are variables (0 = @)
@@ -456,31 +456,13 @@ RST_PutChar macro
 
 ; PutChar is called frequently
 ; PutChar must return with Z set
-
 PutChar:
-	; port 1 is for char I/O
-	OUT 1
+	MOV C, A
+	CALL COUT
 	
-	; Having the wait loop after the character
-	; is output will slow down I/O when running
-	; on hardware, but I can't think of a way
-	; of fitting this into 8 bytes otherwise.
-	
-PutCharWaitLoop: ; address 000ah
-  ; TODO change these few instructions
-  ; if targetting hardware
-  
-  XRA A 
-  RET
+	XRA A 
+	RET
 
-	;IN 1
-	;ANI 040h
-	;RZ
-	;db 0c3h ; opcode for JMP
-	        ; the following two bytes are 
-	        ; 0ah and 00h, so this jumps to
-	        ; PutCharWaitLoop
-	
 RST_LDAXB_INXB_CPI macro
 	RST 2
 	endm
@@ -831,6 +813,9 @@ ReadyNoNewLine:
 	JNZ ExecuteDirect
 	
 LineStartsWithInt:
+	MVI C, 'I'
+	CALL COUT
+
 	; Get the line number into DE
 	INX H
 	MOV E,M
@@ -999,18 +984,26 @@ NLTest:
 	DB 13,(NLTestTrue & 0ffh)-1
 	
 NextCharLoop:
-	; This code is compatable with Stefan Tramm's
-	; 8080 emulator
-	IN 0
-	ANA A
-	RST_JZPage
-	db (NextCharLoop & 0ffh)-1
-	IN 1
+; TODO convert to CIN 
+; Used I/O ports (decimal addresses):
+;
+;     0 - console status
+;         read console 0 status:
+;         0xff : input available
+;         0x00 : no input available
+;
+;     1 - console data
+
+
+	PUSH H
+	;PUSH B
+	CALL CIN
+	;POP B
 	MOV C,A
-	OUT 1 ; echo
+	CALL COUT ; echo
 	
   ; Do we have the same class as before?
-  PUSH H
+  ;PUSH H
 	LXI H,ClassLookup-1
 	; Test for quote first
 	; This doesn't save spave, but takes 3 bytes
@@ -1231,7 +1224,7 @@ LookupToken:
 	RST_JZPage
 	DB (Write_Shared_Written & 0ffh)-1
 
-	org 01b8h
+	;org 01b8h
 
 AbsSub:
 	; A = right brace token, which has high bit
@@ -1599,7 +1592,8 @@ ListSub:
 ReturnSub:
 	; Expect stack size to be 6 or more
 	; any less and we have return without gosub
-	LXI H,-(STACK_INIT-6)-1
+	;LXI H,-(STACK_INIT-6)-1
+	LXI H,780Dh
 	DAD SP
 	CC Error
 	
@@ -1935,6 +1929,113 @@ List_Var:
   ADI '@'
   RST_PutChar
   RET 
+
+; PUT at end to not mess with paging stuff in basic1k
+
+; Constants for serial communications at 9600 with a 6.144MHz crystal
+; The connected terminal should be set for 9600,N,8,1
+BITTIME     equ     0113H           ; 6.144 time delay for a single bit
+HALFBIT     equ     010AH           ; 6.144 time after start bit detected to read the middle of a bit
+;BITTIME     equ     0112H           ; 6.000 time delay for a single bit
+;HALFBIT     equ     0109H           ; 6.000 time after start bit detected to read the middle of a bit
+BITSOUT     equ     11              ; Serial bits to send (start, 8 data, 2 stop)
+BITSIN      equ     9               ; Serial bits to read + 1 (read 8 bits)
+
+;*****************************************************************************
+; CI - Character in from serial console
+;
+; inputs:   none
+; outputs:  A - character from the console
+; calls:    DELAY
+; destroys: a,f,b,c,h,l
+;
+; Data consists of a zero stop bit, followed by the data sent LSB first,
+; followed by one or more ones as stop bits.  The stop bits are not actually
+; read, they just provide a guaranteed delay before the next character needs
+; to be read.  The line idles at logic level one, so when a zero is seen it
+; is interpreted as the start bit of the next character.  A parity bit is not
+; expected or checked.
+;*****************************************************************************
+CIN:
+            di
+            push    b
+            mvi     b,BITSIN        ; Loop count is number of bits to be read minus one
+CI1:                                ;   does not include stop bits
+            rim                     ; Wait for a zero indicating a start bit
+            ora     a
+            jm      CI1
+            lxi     h,HALFBIT       ; delay a half bit time to get to the middle of the start bit
+CI2:
+            dcr     l
+            jnz     CI2
+            dcr     h
+            jnz     CI2
+CI3:
+            lxi     h,BITTIME       ; delay to the middle of the next data bit
+CI4:
+            dcr     l
+            jnz     CI4
+            dcr     h
+            jnz     CI4
+
+            rim                     ; read the next data bit
+            ral                     ; shift the data bit into the carry flag
+            dcr     b               ; exit if all of the bits have been read
+            jz      CI5
+            mov     a,c             ; character in progress into A
+            rar                     ; shift the data bit from carry into the MSB
+            mov     c,a             ; store the character back into C
+            nop
+            jmp     CI3             ; get the next bit
+
+CI5:
+            mov     a,c             ; return the character in A
+            out     0FAH            ; DEBUG: output the char value for the logic analyzer
+            pop     b
+            ei
+            ret
+
+;*****************************************************************************
+; COUT - Character out
+;
+; inputs:   C - character to output
+; outputs:  none
+; calls:    none
+; destroys: a,f
+;
+; Sends a single character to the serial console.
+;
+; Data consists of a zero stop bit, followed by the data sent LSB first,
+; followed by one or more ones as stop bits.  No parity bit is calculated or
+; sent.
+;*****************************************************************************
+COUT:
+            di
+            push    h
+            push    b
+            mvi     b,BITSOUT       ; Number of output bits
+            xra     a               ; Clear carry for a zero start bit
+CO1:
+            mvi     a,080H          ; Set the MSB to shift into the SDE flag
+            rar                     ; Shift one into SDE and carry into SOD flag
+            cmc                     ; ??? This appears to be useless, carry is  set below
+            sim                     ; Output start, data, or stop bit
+            lxi     h,BITTIME       ; Load the time delay for one bit width
+CO2:
+            dcr     l               ; Wait for bit time
+            jnz     CO2
+            dcr     h
+            jnz     CO2
+            stc                     ; Shift in ones for stop bit(s)
+            mov     a,c             ; Get char to send
+            rar                     ; LSB of char into carry to send
+            mov     c,a             ; Store rotated data
+            dcr     b
+            jnz     CO1             ; Send next bit
+            pop     b
+            pop     h
+            ei
+            ret
 	
 ; byte before TokenList must have high bit set
 ; e.g. RET
