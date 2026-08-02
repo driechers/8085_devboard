@@ -1,7 +1,6 @@
 ;Modified Nov 1 2016 by Donn Stewart for use in CPUville Z80 computer
 ;Changed UART (ACIA) port numbers to 3 for status, 2 for data in INIT, CHKIO, OUTC
-;Status bit for read in CHKIO changed to 0x02
-;Status bit for write in OUTC (actually OC3) changed to 0x01
+;Status bit for read in CHKIO changed to 0x02 ;Status bit for write in OUTC (actually OC3) changed to 0x01
 ;Changed UART initialization parameters in INIT
 ;Changed ORG statements at end of file to match system with 2K RAM
 ;*************************************************************
@@ -202,7 +201,19 @@ SORRY:  DB   "SORRY"
 ; THIS LOOP OR WHILE WE ARE INTERPRETING A DIRECT COMMAND
 ; (SEE NEXT SECTION). "CURRNT" SHOULD POINT TO A 0.
 ;
-RSTART: LXI  SP,STACK
+RSTART:
+	;LXI H, 0000H
+	;DAD SP          ; Copy SP to HL
+        ;MOV A, H        ; Move high byte
+        ;ORA L           ; OR with low byte
+        ;JZ VRSTART      ; SP was zero. valid restart
+
+	;POP H
+
+        ;call PRHEX
+
+VRSTART:
+        LXI  SP,STACK
 ST1:    CALL CRLF                       ;AND JUMP TO HERE
         LXI  D,OK                       ;DE->STRING
         SUB  A                          ;A=0
@@ -220,7 +231,7 @@ ST3:    MVI  A,3EH                      ;PROMPT '>' AND
         RST  5
         MOV  A,H                        ;HL=VALUE OF THE # OR
         ORA  L                          ;0 IF NO # WAS FOUND
-        POP  B                          ;BC->END OF LINE
+        POP  B                          ;BC->END OF LINE <- Get here ok
         JZ   DIRECT
         DCX  D                          ;BACKUP DE AND SAVE
         MOV  A,H                        ;VALUE OF LINE # THERE
@@ -252,7 +263,7 @@ ST4:    POP  B                          ;GET READY TO INSERT
         CPI  3                          ;THEN DO NOT INSERT
 
 ;FE1: JZ FE1
-        JZ   RSTART                     ;MUST CLEAR THE STACK
+        CZ   RSTART                     ;MUST CLEAR THE STACK
         ADD  L                          ;COMPUTE NEW TXTUNF
         MOV  L,A
         MVI  A,0
@@ -309,14 +320,14 @@ NEW:    CALL ENDCHK                     ;*** NEW(CR) ***
         SHLD TXTUNF
 ;
 STOP:   CALL ENDCHK                     ;*** STOP(CR) ***
-        JMP  RSTART
+        CALL  RSTART
 ;
 RUN:    CALL ENDCHK                     ;*** RUN(CR) ***
         LXI  D,TXTBGN                   ;FIRST SAVED LINE
 ;
 RUNNXL: LXI  H,0                        ;*** RUNNXL ***
         CALL FNDLP                      ;FIND WHATEVER LINE #
-        JC   RSTART                     ;C:PASSED TXTUNF, QUIT
+        CC   RSTART                     ;C:PASSED TXTUNF, QUIT
 ;
 RUNTSL: XCHG                            ;*** RUNTSL ***
         SHLD CURRNT                     ;SET 'CURRENT'->LINE #
@@ -324,7 +335,7 @@ RUNTSL: XCHG                            ;*** RUNTSL ***
         INX  D                          ;BUMP PASS LINE #
         INX  D
 ;
-RUNSML: CALL CHKIO                      ;*** RUNSML ***
+RUNSML: ;CALL CHKIO                      ;*** RUNSML ***
         LXI  H,TAB2-1                   ;FIND COMMAND IN TAB2
         JMP  EXEC                       ;AND EXECUTE IT
 ;
@@ -367,10 +378,10 @@ GOTO:   RST  3                          ;*** GOTO EXPR ***
 LIST:   CALL TSTNUM                     ;TEST IF THERE IS A #
         CALL ENDCHK                     ;IF NO # WE GET A 0
         CALL FNDLN                      ;FIND THIS OR NEXT LINE
-LS1: JC LS1
-        JC   RSTART                     ;C:PASSED TXTUNF
+LS1:
+        CC   RSTART                     ;C:PASSED TXTUNF
         CALL PRTLN                      ;PRINT THE LINE
-        CALL CHKIO                      ;STOP IF HIT CONTROL-C
+        ;CALL CHKIO                      ;STOP IF HIT CONTROL-C
         CALL FNDLP                      ;FIND NEXT LINE
         JMP  LS1                        ;AND LOOP BACK
 ;
@@ -629,7 +640,7 @@ IFF:    RST  3                          ;*** IF ***
         JNZ  RUNSML                     ;NO, CONTINUE
         CALL FNDSKP                     ;YES, SKIP REST OF LINE
         JNC  RUNTSL                     ;AND RUN THE NEXT LINE
-        JMP  RSTART                     ;IF NO NEXT, RE-START
+        CALL  RSTART                     ;IF NO NEXT, RE-START
 ;
 INPERR: LHLD STKINP                     ;*** INPERR ***
         SPHL                            ;RESTORE OLD SP
@@ -1078,7 +1089,7 @@ ERROR:  SUB  A                          ;*** ERROR ***
 ;FE6: ; NOT Triggered
 ;	NOP
 ;	JZ FE6
-        JZ   RSTART                     ;IF ZERO, JUST RESTART
+        CZ   RSTART                     ;IF ZERO, JUST RESTART
         MOV  A,M                        ;IF NEGATIVE,
         ORA  A
         JM   INPERR                     ;REDO INPUT
@@ -1094,7 +1105,7 @@ ERROR:  SUB  A                          ;*** ERROR ***
 ;	NOP
 ;	JMP FE5
 
-        JMP  RSTART                     ;THEN RESTART
+        CALL  RSTART                     ;THEN RESTART
 ;
 QSORRY: PUSH D                          ;*** QSORRY ***
 ASORRY: LXI  D,SORRY                    ;*** ASORRY ***
@@ -1430,6 +1441,7 @@ PATLOP:
         SHLD RANPNT
         LXI  H,TXTBGN
         SHLD TXTUNF
+	lxi sp, 0                       ; flag valid start. RSTART fixes
         JMP  RSTART
 OC2:    JNZ  OC3                        ;IT IS ON
         POP  PSW                        ;IT IS OFF
@@ -1546,10 +1558,70 @@ CI6:    CPI  3H                         ;IS IT CONTROL-C?
 ;	NOP
 ;	JMP FEE ; TODO how did i miss this? eeeh this actually seems to work just fine
 
-        JMP  RSTART                     ;YES, RESTART TBI ;
-MSG1:   DB   "TINY "
+        CALL  RSTART                     ;YES, RESTART TBI ;
+
+; Print least sig nibble in A
+;   Clobbers PSW BC HL
+PRNIB:
+	ani 0fh
+	mvi b,0
+	mov c,a                ; BC is now the nibble value
+        lxi h, NIBS            ; Point HL to ASCII table for nibbles
+	dad b                  ; Add nibble value to HL
+	mov a,m                ; Load nibble ascii value
+	rst 2                  ; Print nibble
+        ret
+
+; PRINT Hex Val in HL
+;   CLOBBERS PSW BC DE
+PRHEX:
+        xchg                   ; Put addr in DE
+	mov a,d                ; Do (addr_high >> 4) & 0xf -> a
+	rrc
+	rrc
+	rrc
+	rrc
+        call PRNIB
+
+	mov a,d                ; Do addr_high & 0xf -> a
+        call PRNIB
+
+	mov a,e                ; Do (addr_low >> 4) & 0xf -> a
+	rrc
+	rrc
+	rrc
+	rrc
+        call PRNIB
+
+	mov a,e                ; Do addr_low & 0xf -> a
+        call PRNIB
+	xchg                   ; Restore HL
+
+	ret
+
+
+
+MSG1:   DB   "T "
         DB   "BASIC"
         DB   CR
+
+NIBS:
+	DB '0'
+	DB '1'
+	DB '2'
+	DB '3'
+	DB '4'
+	DB '5'
+	DB '6'
+	DB '7'
+	DB '8'
+	DB '9'
+	DB 'a'
+	DB 'b'
+	DB 'c'
+	DB 'd'
+	DB 'e'
+	DB 'f'
 ;
 ;*************************************************************
 ;
@@ -1579,70 +1651,100 @@ MSG1:   DB   "TINY "
 ;
 TAB1:                                   ;DIRECT COMMANDS
         DB   "LIST"
-        DW  LIST
+        DB  LIST >> 8 | 080h
+        DB  LIST & 0FFh
         DB   "RUN"
-        DW  RUN
+        DB  LIST >> 8 | 080h
+        DB  LIST  & 0FFh
         DB   "NEW"
-        DW  NEW
+        DB  NEW >> 8 | 080h
+        DB  NEW & 0FFh
 ;
 TAB2:                                   ;DIRECT/STATEMENT
         DB   "NEXT"
-        DW  NEXT
+        DB  NEXT >> 8 | 080h
+        DB  NEXT & 0FFh
         DB   "LET"
-        DW  LET
+        DB  LET >> 8 | 080h
+        DB  LET & 0FFh
         DB   "IF"
-        DW  IFF
+        DB  IFF >> 8 | 080h
+        DB  IFF & 0FFh
         DB   "GOTO"
-        DW  GOTO
+        DB  GOTO >> 8 | 080h
+        DB  GOTO & 0FFh
         DB   "GOSUB"
-        DW  GOSUB
+        DB  GOSUB >> 8 | 080h
+        DB  GOSUB & 0FFh
         DB   "RETURN"
-        DW  RETURN
+        DB  RETURN >> 8 | 080h
+        DB  RETURN & 0FFh
         DB   "REM"
-        DW  REM
+        DB  REM >> 8 | 080h
+        DB  REM & 0FFh
         DB   "FOR"
-        DW  FOR
+        DB  FOR >> 8 | 080h
+        DB  FOR & 0FFh
         DB   "INPUT"
-        DW  INPUT
+        DB  INPUT >> 8 | 080h
+        DB  INPUT & 0FFh
         DB   "PRINT"
-        DW  PRINT
+        DB  PRINT >> 8 | 080h
+        DB  PRINT & 0ffh
         DB   "STOP"
-        DW  STOP
-        DW  DEFLT
+        DB  STOP >> 8 | 080h
+        DB  STOP & 0FFh
+        DB  DEFLT >> 8 | 080h
+        DB  DEFLT & 0FFh
 ;
 TAB4:                                   ;FUNCTIONS
         DB   "RND"
-        DW  RND
+        DB  RND >> 8 | 080h
+        DB  RND & 0FFh
         DB   "ABS"
-        DW  ABS
+        DB  ABS >> 8 | 080h
+        DB  ABS & 0FFh
         DB   "SIZE"
-        DW  SIZE
-        DW  XP40
+        DB  SIZE >> 8 | 080h
+        DB  SIZE & 0FFh
+        DB  XP40 >> 8 | 080h
+        DB  XP40 & 0FFh
 ;
 TAB5:                                   ;"TO" IN "FOR"
         DB   "TO"
-        DW  FR1
-        DW  QWHAT
+        DB  FR1 >> 8 | 080h
+        DB  FR1 & 0FFh
+        DB  QWHAT >> 8 | 080h
+        DB  QWHAT & 0FFh
 ;
 TAB6:                                   ;"STEP" IN "FOR"
         DB   "STEP"
-        DW  FR2
-        DW  FR3
+        DB  FR2 >> 8 | 080h
+        DB  FR2 & 0FFh
+        DB  FR3 >> 8 | 080h
+        DB  FR3 & 0FFh
 ;
 TAB8:                                   ;RELATION OPERATORS
         DB   ">="
-        DW  XP11
+        DB  XP11 >> 8 | 080h
+        DB  XP11 & 0FFh
         DB   '#'
-        DW  XP12
+        DB  XP12 >> 8 | 080h
+        DB  XP12 & 0FFh
         DB   '>'
-        DW  XP13
+        DB  XP13 >> 8 | 080h
+        DB  XP13 & 0FFh
         DB   '='
-        DW  XP15
+        DB  XP15 >> 8 | 080h
+        DB  XP15 & 0FFh
         DB   "<="
-        DW  XP14
+        DB  XP14 >> 8 | 080h
+        DB  XP14 & 0FFh
         DB   '<'
-        DW  XP16
-        DW  XP17
+        DB  XP16 >> 8 | 080h
+        DB  XP16 & 0FFh
+        DB  XP17 >> 8 | 080h
+        DB  XP17 & 0FFh
 ;
 DIRECT: LXI  H,TAB1-1                   ;*** DIRECT ***
 ;
@@ -1675,7 +1777,9 @@ EX5:    MOV  A,M                        ;LOAD HL WITH THE JUMP
         MOV  L,M
         ANI  7FH                        ;MASK OFF BIT 7
         MOV  H,A
-        POP  PSW                        ;CLEAN UP THE GABAGE
+        POP  PSW                        ;CLEAN UP THE GABAGE <- Got here ok try printing hl?
+	;call PRHEX
+	;hlt
         PCHL                            ;AND WE GO DO IT
 ;
 LSTROM:                                 ;ALL ABOVE CAN BE ROM
