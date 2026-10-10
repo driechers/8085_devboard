@@ -1,5 +1,17 @@
-all:
-	zcc +micro8085 -vn hello.c -o hello -create-app -crt0 system85_crt0.asm
+CC = zcc
+CFLAGS = +micro8085 -vn
+LDFLAGS = +micro8085 -vn -create-app -crt0=system85_crt0.asm
+
+OBJ = hello.o stoopid.o
+
+%.o: %.asm
+	$(CC) $(CFLAGS) -c $< -o $@
+
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@	
+
+hello: $(OBJ)
+	$(CC) $(LDFLAGS) $(OBJ) -o $@
 
 clean:
-	rm hello hello.c.lis hello.ihx hello.lis hello.map hello_BSS.bin hello_DATA.bin
+	rm hello hello.ihx hello.map *.lis *.bin *.o
