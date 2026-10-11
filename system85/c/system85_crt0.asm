@@ -10,7 +10,7 @@
 ;-------------------------------------------------------------------------
         defc    crt0 = 1
         INCLUDE "zcc_opt.def"
-
+; TODO ifdefs for rom vs ram programs
 ;-------------------------------------------------------------------------
 ; Some scope definitions
 ;-------------------------------------------------------------------------
@@ -19,23 +19,8 @@
         PUBLIC    __Exit         ;jp'd to by exit()
         PUBLIC    l_dcal          ;jp(hl)
         
-        PUBLIC    _urxbuf
-        PUBLIC    _putidx
-        PUBLIC    _getidx
         PUBLIC    _get_msec
 
-        PUBLIC    puartd
-        PUBLIC    puartc
-        PUBLIC    pspiclk
-        PUBLIC    pselect
-        PUBLIC    padc1
-        PUBLIC    padc2
-
-        PUBLIC    uenabl
-        PUBLIC    udtr
-        PUBLIC    urts
-
-        PUBLIC    eepgsz
         PUBLIC    CPU_CLK_kHz
 
 ;-------------------------------------------------------------------------
@@ -46,40 +31,17 @@ piob    equ  02H
 pioc    equ  03H
 ptiml   equ  04H
 ptimh   equ  05H
-puartd  equ  10H
-puartc  equ  11H
-pspiclk equ  20H    ;DUMMY WRITE TO GENERATE CLOCK
-pselect equ  30H    ;TWO BIT OUTPUT REGISTER
-padc1   equ  40H    ;ADC CONV.TIME 140 MICROSEC FROM
-padc2   equ  50H    ;OUT(WRITE/START) TO IN(READ)
-pdac    equ  60H
-
-; *** INTEL8251 UART COMMANDS ETC ***
-ureset  equ  40H    ;01000000b    ;RESET COMMAND
-usetup  equ  4EH    ;01001110b    ;8 DATA, 1 STOP, X16
-uenabl  equ  15H    ;00010101b    ; - ,ERRST,RXEN, - ,TXEN
-udtr    equ  02H    ;00000010b    ; - ,  -  , -  ,DTR, -
-urts    equ  20H    ;00100000b    ;RTS,  -  , -  , - , -
-
-; *** SERIAL EEPROM COMMANDS AND SIZE ***
-eepgsz  equ  64     ;IMPLEMENTATION ALLOWS MAX PAGE SIZE 256 BYTE
-eesize  equ  32768  ;IMPLEMENTATION ALLOWS MAX SIZE 65536 - PAGE SIZE
 
 ;-------------------------------------------------------------------------
         defc    CRT_ORG_CODE = 0x0000
         defc    CRT_ORG_DATA = 0x8000
         defc    CRT_ORG_BSS  = 0x8000
 
-;------ place uart rx buff at top of ram align to 256 byte boundary ------
-;------ locate get & put index together for single 16bit r/w access ------
-        defc    _urxbuf   = 0xFF00
-        defc    _putidx   = (_urxbuf-1)
-        defc    _getidx   = (_urxbuf-2)
-        defc    _mstick   = (_urxbuf-4)
-        defc    _scrtchpd = (_urxbuf-16)
+;-------------------------------------------------------------------------
+        defc    _mstick   = 0xFF00
 
 ;------ below rx buffer and some additional data we place the stack ------
-        defc    REGISTER_SP = _scrtchpd
+        ;defc    REGISTER_SP = _scrtchpd
         defc    CLIB_EXIT_STACK_SIZE = 0
         defc    __CPU_CLOCK = 6144000
         defc    CPU_CLK_kHz = 6144
@@ -95,6 +57,7 @@ rst0:   ld      sp,__register_sp
         jp      program         ;RST0 standard entry 
         defs    $08-ASMPC
 
+; TODO change org for each vector and delete unused
 rst1:   ret                     ;RST1 not used
         defs    $10-ASMPC
 
@@ -139,23 +102,8 @@ rst75:  di                      ;RST7.5 timer isr
         ei
         ret
 
-intr65: push    af
-        push    hl
-        ld      a,(_putidx)     ;get the buffer put index
-        ld      l,a             ;prepare for memory access
-        ld      h,_urxbuf/256   ;msb of buffer address
-        in      a,(puartd)      ;get the char from uart
-        ld      (hl),a          ;poke it to buffer
-        inc     l               ;bump buf put index
-        ld      a,(_getidx)     ;peek the get index
-        cp      l               ;compare with put
-        jp      z,i_skip        ;put==get means buffer full
-        ld      a,l             ;updated put index to a
-        ld      (_putidx),a     ;and store it
-i_skip: pop     hl
-        pop     af
-        ei
-        ret
+intr65: ei
+	ret
 
 ;-------------------------------------------------------------------------
 ; extern uint16 get_msec(void)  ;returns the millisec tick value
@@ -175,29 +123,15 @@ program:
 
 __Exit:
         call    crt0_exit
-        jp      rst0            ;restart if main should return
+        ;jp      rst0            ;restart if main should return
+	rst 0;
 
 l_dcal:  jp     (hl)            ;Used for function pointer calls
 
 ;-------------------------------------------------------------------------
 target_init:
         ld      hl,0
-        shld    _getidx         ;RESET PUT & GET INDEXES
         shld    _mstick         ;RESET MILLISEC COUNT
-        ld      a,80H
-        out     (pdac),a        ;PUT OUT HALF VCC ON DAC
-        sub     a               ;RESET A
-        out     (pselect),a     ;RESET D F/F select LINES
-;8251_uart
-        out     (puartc),a      ;PUT 8251 IN COMMAND MODE
-        out     (puartc),a      ;WRITE 0 THREE TIMES
-        out     (puartc),a   
-        ld      a,ureset        ;RESET COMMAND
-        out     (puartc),a      ;WRITE IT TO 8251 USART
-        ld      a,usetup        ;8 DATA, 1 STOP, X16
-        out     (puartc),a      ;WRITE IT TO 8251 USART
-        ld      a,uenabl        ;ERRST, RXEN, TXEN
-        out     (puartc),a      ;WRITE IT TO 8251 USART
 ;8155_timer
         ld      hl,CPU_CLK_kHz
         sra     hl              ;DIV BY 2 TO GET TIMER COUNT
@@ -210,16 +144,17 @@ target_init:
         ld      a,0C0H          ;START TIMER COMMAND
         out     (piocmd),a      ;SEND TO 8155 CONFIG REG
 ;8085_interrupt
-        ld      a,19H           ;RST F/F & ENABLE 7.5 & 6.5
-        sim                     ;SET THE NEW MASK
-        ei                      ;ENABLE INTERRUPT
+; TODO mask 6.5
+;        ld      a,19H           ;RST F/F & ENABLE 7.5 & 6.5
+;        sim                     ;SET THE NEW MASK
+;        ei                      ;ENABLE INTERRUPT
         ret
 
 ;-------------------------------------------------------------------------
         defc    __crt_org_bss = CRT_ORG_BSS
         defc    __crt_model = 1
 
-        INCLUDE "crt/classic/crt_runtime_selection.inc" 
+        ;INCLUDE "crt/classic/crt_runtime_selection.inc" 
         INCLUDE "crt/classic/crt_section.inc"
 
 ;-------------------------------------------------------------------------

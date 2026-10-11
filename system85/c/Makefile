@@ -13,5 +13,7 @@ OBJ = hello.o stoopid.o
 hello: $(OBJ)
 	$(CC) $(LDFLAGS) $(OBJ) -o $@
 
+all: hello
+
 clean:
-	rm hello hello.ihx hello.map *.lis *.bin *.o
+	rm -f hello hello.ihx hello.map *.lis *.bin *.o
