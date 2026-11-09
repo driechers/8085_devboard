@@ -1,6 +1,6 @@
 CC = zcc
-CFLAGS = +micro8085 -vn
-LDFLAGS = +micro8085 -vn -create-app -crt0=system85_crt0.asm
+CFLAGS = +system85 -vn
+LDFLAGS = +system85 -vn -create-app
 
 OBJ = hello.o stoopid.o
 
